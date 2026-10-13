@@ -1,0 +1,261 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="CyberGuard analyzes URL text for phishing risk indicators using transparent heuristics.">
+    <title>CyberGuard - Phishing Detection & URL Security Analyzer</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="script.js" defer></script>
+</head>
+<body>
+    <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <symbol id="icon-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10"/></symbol>
+        <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5"/></symbol>
+        <symbol id="icon-delete" viewBox="0 0 24 24"><path d="M10 11v6M14 11v6M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+        <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></symbol>
+    </svg>
+    <a class="skip-link" href="#scanner">Skip to scanner</a>
+
+    <header class="site-header">
+        <nav class="navbar" aria-label="Main navigation">
+            <a class="brand" href="#dashboard" aria-label="CyberGuard dashboard">
+                <span class="brand-mark" aria-hidden="true">CG</span>
+                <span>
+                    <strong>CyberGuard</strong>
+                    <small>URL Security Analyzer</small>
+                </span>
+            </a>
+
+            <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation">
+                <span class="sr-only">Toggle navigation</span>
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+
+            <ul class="nav-links" id="primary-navigation">
+                <li><a href="#dashboard" aria-current="page">Dashboard</a></li>
+                <li><a href="#scanner">URL Scanner</a></li>
+                <li><a href="#insights">Security Analytics</a></li>
+                <li><a href="#history">Scan History</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <header class="page-header" aria-labelledby="hero-title">
+            <div class="hero-content">
+                <p class="eyebrow">CyberGuard / Security workspace</p>
+                <h1 id="hero-title" tabindex="-1">Dashboard</h1>
+                <p class="hero-copy" id="viewDescription">An overview of saved URL analyses and your analysis environment.</p>
+            </div>
+            <span class="badge badge-neutral">URL-text analysis</span>
+        </header>
+
+        <section class="page-view" id="dashboard" data-page="dashboard" aria-label="Dashboard">
+            <div class="stats-grid">
+                <article class="stat-card"><p>Saved scans</p><strong data-stat="total">-</strong><span class="stat-caption">Opt-in history records</span></article>
+                <article class="stat-card"><p>Average risk score</p><strong data-stat="average_score">-</strong><span class="stat-caption">Across saved scans / 100</span></article>
+                <article class="stat-card"><p>High risk scans</p><strong class="risk-high" data-stat="high">-</strong><span class="stat-caption">Heuristic score of 60 or above</span></article>
+                <article class="stat-card"><p>Flagged scans</p><strong class="risk-medium" data-stat="flagged">-</strong><span class="stat-caption">Medium or High heuristic risk</span></article>
+            </div>
+            <aside class="threat-panel" aria-label="Analysis status">
+                <div class="panel-header">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span>Analysis environment</span>
+                    <span class="environment-label">TEXT ONLY</span>
+                </div>
+                <div class="signal-grid">
+                    <div class="signal-card">
+                        <span class="signal-label">Website Visits</span>
+                        <strong>0</strong>
+                    </div>
+                    <div class="signal-card">
+                        <span class="signal-label">External APIs</span>
+                        <strong>Off</strong>
+                    </div>
+                    <div class="signal-card">
+                        <span class="signal-label">Result Type</span>
+                        <strong>Heuristic</strong>
+                    </div>
+                    <div class="signal-card">
+                        <span class="signal-label">Processing</span>
+                        <strong>Flask API</strong>
+                    </div>
+                </div>
+            </aside>
+            <div class="workspace-actions">
+                <a class="button button-primary" href="#scanner"><svg class="icon" aria-hidden="true"><use href="#icon-scan"/></svg>Analyze URL</a>
+                <a class="button button-ghost" href="#history">View saved scans<svg class="icon icon-forward" aria-hidden="true"><use href="#icon-arrow"/></svg></a>
+            </div>
+        </section>
+
+        <div class="workbench page-view" data-page="scanner" hidden>
+        <section class="scanner-section" id="scanner" aria-labelledby="scanner-title">
+            <div class="section-heading">
+                <p class="eyebrow">URL scanner</p>
+                <h2 id="scanner-title">Analyze a website address</h2>
+                <p>Analyze URL text for risk indicators. Heuristic analysis cannot guarantee that a website is safe or malicious.</p>
+            </div>
+
+            <form class="scan-form" id="scanForm" novalidate>
+                <label for="urlInput">Website URL</label>
+                <div class="input-row">
+                    <input
+                        type="url"
+                        id="urlInput"
+                        name="url"
+                        inputmode="url"
+                        autocomplete="url"
+                        placeholder="https://example.com/login"
+                        aria-describedby="urlHelp formError"
+                        required
+                    >
+                    <button class="button button-primary" type="submit"><svg class="icon" aria-hidden="true"><use href="#icon-scan"/></svg><span id="scanButtonLabel">Scan URL</span></button>
+                </div>
+                <label class="history-opt-in" for="saveHistory">
+                    <input type="checkbox" id="saveHistory" name="save_history" aria-describedby="historyPrivacy">
+                    Save Scan to History
+                </label>
+                <p class="form-help" id="urlHelp">Processed by this application's backend. No website visits or external security services.</p>
+                <p class="form-help" id="historyPrivacy">Saved addresses include only scheme, host, and port. Paths, queries, and fragments are removed. Credential URLs are rejected.</p>
+                <p class="form-error" id="formError" role="alert" aria-live="polite"></p>
+            </form>
+        </section>
+
+        <section class="results-section" id="results" aria-labelledby="results-title">
+            <div class="section-heading">
+                <p class="eyebrow">Analysis report</p>
+                <h2 id="results-title">URL analysis results</h2>
+            </div>
+
+            <div class="dashboard-grid">
+                <article class="result-card primary-result" id="resultCard" aria-live="polite">
+                    <div class="result-topline">
+                        <span class="badge badge-neutral">Awaiting analysis</span>
+                        <span class="timestamp" id="scanTime">Not scanned yet</span>
+                    </div>
+                    <h3 id="resultTitle">No URL analyzed</h3>
+                    <p id="resultSummary">Submit a URL to see a heuristic risk score and the rules that contributed to it. A low score is not a safety guarantee.</p>
+                    <p class="form-help" id="saveStatus" role="status"></p>
+                    <dl class="result-details">
+                        <div>
+                            <dt>URL reviewed</dt>
+                            <dd id="reviewedUrl">-</dd>
+                        </div>
+                        <div>
+                            <dt>Heuristic risk level</dt>
+                            <dd id="riskLevel">-</dd>
+                        </div>
+                        <div>
+                            <dt>Processing mode</dt>
+                            <dd>URL-text heuristics</dd>
+                        </div>
+                    </dl>
+                </article>
+
+                <article class="checklist-card">
+                    <h3>Detection reasons</h3>
+                    <ul class="indicator-list" id="indicatorList">
+                        <li>Awaiting URL analysis</li>
+                    </ul>
+                </article>
+            </div>
+        </section>
+        </div>
+
+        <section class="stats-section page-view" id="insights" data-page="insights" aria-labelledby="insights-title" hidden>
+            <div class="section-heading">
+                <p class="eyebrow">Saved scan statistics</p>
+                <h2 id="insights-title">History snapshot</h2>
+            </div>
+
+            <div class="stats-grid">
+                <article class="stat-card">
+                    <p>Saved scans</p>
+                    <strong id="urlsChecked" data-stat="total">-</strong>
+                    <span class="stat-caption">Opt-in history records</span>
+                </article>
+                <article class="stat-card">
+                    <p>Average risk score / 100</p>
+                    <strong id="averageScore" data-stat="average_score">-</strong>
+                    <span class="stat-caption">All saved records, not just this page</span>
+                </article>
+                <article class="stat-card">
+                    <p>High risk scans</p>
+                    <strong class="risk-high" id="highRiskCount" data-stat="high">-</strong>
+                    <span class="stat-caption">Heuristic score of 60 or above</span>
+                </article>
+                <article class="stat-card">
+                    <p>Medium or High risk scans</p>
+                    <strong class="risk-medium" id="riskCounter" data-stat="flagged">-</strong>
+                    <span class="stat-caption">Heuristic score of 30 or above</span>
+                </article>
+            </div>
+            <div class="analytics-summary">
+                <div class="section-heading"><p class="eyebrow">Risk distribution</p><h2>Saved scan classifications</h2></div>
+                <p class="form-help">Based on saved records only. Risk classifications are heuristic indicators, not security verdicts.</p>
+                <div class="distribution-grid">
+                    <article class="distribution-card"><div><span class="badge badge-safe">Low risk</span><strong data-stat="low">-</strong></div><meter id="lowMeter" class="risk-low" min="0" max="1" value="0" aria-label="Low risk saved scans"></meter><p>Score 0-29</p></article>
+                    <article class="distribution-card"><div><span class="badge badge-warning">Medium risk</span><strong data-stat="medium">-</strong></div><meter id="mediumMeter" class="risk-medium" min="0" max="1" value="0" aria-label="Medium risk saved scans"></meter><p>Score 30-59</p></article>
+                    <article class="distribution-card"><div><span class="badge badge-danger">High risk</span><strong data-stat="high">-</strong></div><meter id="highMeter" class="risk-high" min="0" max="1" value="0" aria-label="High risk saved scans"></meter><p>Score 60-100</p></article>
+                </div>
+                <p class="form-help" id="analyticsStatus" role="status">Loading saved scan statistics...</p>
+            </div>
+        </section>
+
+        <section class="history-section page-view" id="history" data-page="history" aria-labelledby="history-title" hidden>
+            <div class="history-toolbar">
+                <div class="section-heading">
+                    <p class="eyebrow">Scan history</p>
+                    <h2 id="history-title">Saved URL analyses</h2>
+                </div>
+                <div class="history-actions">
+                    <button class="button button-ghost" id="refreshHistory" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg>Refresh History</button>
+                    <button class="button button-ghost" id="deleteHistory" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-delete"/></svg>Delete History</button>
+                </div>
+            </div>
+            <p class="form-help">History is shared by everyone using this server. Stored addresses exclude paths, query strings, and fragments.</p>
+            <p class="form-error" id="historyError" role="alert"></p>
+            <div class="history-table-wrap" tabindex="0" role="region" aria-label="Saved scans table">
+                <table class="history-table">
+                    <caption class="sr-only">Saved scans, newest first. Times are shown in your local timezone.</caption>
+                    <thead><tr>
+                        <th scope="col">Date</th>
+                        <th scope="col">URL</th>
+                        <th scope="col">Risk Score</th>
+                        <th scope="col">Risk Level</th>
+                        <th scope="col">Reasons</th>
+                    </tr></thead>
+                    <tbody id="historyRows"><tr><td colspan="5">Loading saved scans...</td></tr></tbody>
+                </table>
+            </div>
+            <div class="history-pagination">
+                <p class="form-help" id="historyStatus" role="status" aria-live="polite"></p>
+                <div class="history-actions">
+                    <button class="button button-ghost" id="historyPrevious" type="button" aria-label="Previous history page" title="Previous history page" disabled><svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></button>
+                    <button class="button button-ghost" id="historyNext" type="button" aria-label="Next history page" title="Next history page" disabled><svg class="icon icon-forward" aria-hidden="true"><use href="#icon-arrow"/></svg></button>
+                </div>
+            </div>
+        </section>
+
+        <section class="about-section" id="about" aria-labelledby="about-title">
+            <div>
+                <p class="eyebrow">Analysis limitations</p>
+                <h2 id="about-title">An indicator, not a verdict</h2>
+            </div>
+            <p>
+                CyberGuard uses URL-text rules, not live threat intelligence. Heuristic analysis cannot guarantee that a website is safe or malicious. It does not check DNS, reputation, certificates, redirects, or page content. Both false positives and false negatives are possible.
+            </p>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 CyberGuard. Heuristic URL security analyzer.</p>
+        <p>URL text is processed by this application's backend only.</p>
+    </footer>
+
+</body>
+</html>
