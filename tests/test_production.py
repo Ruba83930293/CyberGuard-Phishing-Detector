@@ -191,13 +191,31 @@ class ProductionConfigurationTests(unittest.TestCase):
             self.assertFalse(settings["reload"])
             self.assertEqual(settings["secure_scheme_headers"], {})
             self.assertEqual(settings["forwarded_allow_ips"], "")
-            self.assertEqual(settings["forwarder_headers"], [])
+            self.assertEqual(settings["forwarder_headers"], "")
         with patch.dict(os.environ):
             os.environ.pop("PORT", None)
             self.assertEqual(runpy.run_path(str(path))["bind"], "127.0.0.1:8000")
         for port in ("", "0", "65536", "-1", "abc", "10000 ", "1.5"):
             with self.subTest(port=port), patch.dict(os.environ, {"PORT": port}), self.assertRaises(ValueError):
                 runpy.run_path(str(path))
+
+    @unittest.skipIf(os.name == "nt", "Gunicorn requires a Unix runtime")
+    def test_gunicorn_settings_pass_native_validators(self):
+        from gunicorn.config import Config
+
+        path = Path(__file__).resolve().parents[1] / "gunicorn.conf.py"
+        with patch.dict(os.environ, {"PORT": "10000"}):
+            settings = runpy.run_path(str(path))
+            config = Config()
+        for name, value in settings.items():
+            if name in config.settings:
+                with self.subTest(setting=name):
+                    config.set(name, value)
+        self.assertEqual(config.bind, ["0.0.0.0:10000"])
+        self.assertEqual(config.wsgi_app, "wsgi:application")
+        self.assertEqual(config.forwarder_headers, [])
+        self.assertEqual(config.forwarded_allow_ips, [])
+        self.assertEqual(config.secure_scheme_headers, {})
 
     def test_environment_selects_production_and_ignores_sqlite_path(self):
         with patch.dict(os.environ, {"CYBERGUARD_ENV": "production", "CYBERGUARD_PUBLIC_ORIGIN": "https://cyberguard.example",

@@ -27,4 +27,5 @@ loglevel = "warning"
 # ProxyFix is the sole interpreter of explicitly trusted forwarding headers.
 secure_scheme_headers = {}
 forwarded_allow_ips = ""
-forwarder_headers = []
+# Gunicorn parses the empty string into an empty header allowlist.
+forwarder_headers = ""
