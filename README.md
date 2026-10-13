@@ -73,7 +73,7 @@ URL input may omit the scheme; HTTPS is assumed. HTTP/HTTPS, valid domains, IPv4
 
 ## Production Deployment
 
-Use a Linux host or Linux container with a supported stable Python release, a valid TLS certificate, one reverse proxy, and a private Redis service. Do not use `python app.py`, `flask run`, debug mode, or a reloader for public hosting. `wsgi.py` refuses to start unless production mode is explicitly selected. Gunicorn defaults bind only to loopback; never expose its port directly when proxy trust is enabled. See the [Flask Gunicorn guidance](https://flask.palletsprojects.com/en/stable/deploying/gunicorn/).
+Use a Linux host or Linux container with a supported stable Python release, a valid TLS certificate, one reverse proxy, and a private Redis service. Do not use `python app.py`, `flask run`, debug mode, or a reloader for public hosting. `wsgi.py` refuses to start unless production mode is explicitly selected. Gunicorn binds to loopback without `PORT`, or all interfaces on the supplied platform `PORT`; never expose its port directly to untrusted clients when proxy trust is enabled. See the [Flask Gunicorn guidance](https://flask.palletsprojects.com/en/stable/deploying/gunicorn/).
 
 ### Environment Configuration
 
@@ -104,7 +104,19 @@ export CYBERGUARD_RATE_STORAGE_URI=redis://127.0.0.1:6379/5
 
 Replace the example hostname and Redis URI with your infrastructure values. Keep Redis private, authenticated where appropriate, and protected by TLS (`rediss://`) when traffic crosses hosts. Store credentials in the hosting platform's secret manager or a protected service environment file, never in source control or shell commands retained in public logs. All workers/replicas must share the same dedicated Redis quota database. Counter keys contain client IPs and counts, not submitted URLs; configure Redis access/retention accordingly. Do not share or clear this Redis database with unrelated applications.
 
-Run Gunicorn under a non-root service account with a service manager and restricted file permissions. The provided configuration uses two workers/two threads, bounded request headers, worker timeouts/recycling, no reload/debug, and no access log containing request URLs. Adjust capacity only after load testing. Gunicorn's automatic forwarded-header interpretation is disabled; `ProxyFix` handles only the explicitly configured single-hop `X-Forwarded-For` and `X-Forwarded-Proto` values.
+Run Gunicorn under a non-root service account with a service manager and restricted file permissions. The provided configuration uses one worker/two threads, bounded request headers, worker timeouts/recycling, no reload/debug, and no access log containing request URLs. This is a conservative starting point for Render Free's 512 MB instance, not a measured memory or throughput guarantee. Adjust capacity only after load testing. Gunicorn's automatic forwarded-header interpretation is disabled; `ProxyFix` handles only the explicitly configured single-hop `X-Forwarded-For` and `X-Forwarded-Proto` values.
+
+### Render Configuration
+
+- Build command: `pip install -r requirements.txt` using a supported stable Linux Python release.
+- Start command: `gunicorn --config gunicorn.conf.py wsgi:application`. The configuration also sets `wsgi_app` explicitly.
+- Render supplies `PORT`; when present, Gunicorn binds to `0.0.0.0:$PORT`. Invalid port values fail startup. Without `PORT`, it retains the loopback binding for the standalone Nginx example.
+- Set `CYBERGUARD_ENV=production`, `CYBERGUARD_PUBLIC_ORIGIN=https://YOUR-SERVICE.onrender.com` (or the single canonical custom domain, without a trailing slash), and `CYBERGUARD_RATE_STORAGE_URI` to your dedicated private Redis connection URI in Render's environment settings. Never commit Redis credentials.
+- Set `CYBERGUARD_PROXY_HOPS=1` only after verifying that the isolated platform ingress supplies trustworthy rightmost client-IP and HTTPS values. This trusts one value of each header, not an arbitrary proxy chain. A multi-value `X-Forwarded-For` ending in an internal proxy address would merge client quotas. Do not increase trust or accept the first address blindly; request a topology-specific review if Render's actual chain differs.
+- Gunicorn must remain unreachable by untrusted clients except through the platform ingress. `X-Forwarded-Host` and `X-Forwarded-Port` remain ignored; Host and exact Origin restrictions are unchanged. Do not use wildcard Host/CORS settings to fix platform routing.
+- Before launch, verify Linux startup, memory use under load, live Redis quota behavior, preserved canonical Host, HTTPS detection, and spoofed forwarding-header handling through Render. A plain HTTP health probe will fail the HTTPS requirement; use the platform's TCP check unless a trusted HTTPS-aware HTTP probe is verified.
+
+See [Render port binding requirements](https://render.com/docs/web-services#port-binding) and [compute plans](https://render.com/docs/compute-plans). The local Nginx template is an alternative deployment setup, not a requirement to install Nginx on Render.
 
 `deploy/nginx.conf.example` is a reverse-proxy template, not an installed configuration. Replace its hostname and certificate paths, add your platform's default-host rejection/TLS renewal policies, and validate with `nginx -t` before enabling it. Only expose proxy ports 80/443; firewall Gunicorn and Redis from external clients. The proxy must overwrite (not append) forwarding headers, preserve the Host, and enforce body/time/connection limits. Never use `CYBERGUARD_PROXY_HOPS=1` if clients can reach Gunicorn directly. Other proxy topologies require a separately reviewed configuration. [Flask warns that incorrect ProxyFix trust is a security issue](https://flask.palletsprojects.com/en/stable/deploying/proxy_fix/).
 

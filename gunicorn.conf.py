@@ -1,7 +1,13 @@
-"""Linux WSGI defaults; run behind one isolated HTTPS reverse proxy."""
+"""Linux WSGI defaults for Render or an isolated local HTTPS reverse proxy."""
 
-bind = "127.0.0.1:8000"
-workers = 2
+import os
+
+port = os.environ.get("PORT")
+if port is not None and (not port.isascii() or not port.isdigit() or not 1 <= int(port) <= 65535):
+    raise ValueError("PORT must be an integer between 1 and 65535.")
+bind = f"0.0.0.0:{int(port)}" if port is not None else "127.0.0.1:8000"
+wsgi_app = "wsgi:application"
+workers = 1
 worker_class = "gthread"
 threads = 2
 timeout = 15

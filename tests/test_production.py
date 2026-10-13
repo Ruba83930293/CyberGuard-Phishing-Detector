@@ -113,6 +113,29 @@ class ProductionTests(unittest.TestCase):
                                 json={"url": "https://example.com"})
         self.assertEqual(response.status_code, 200)
 
+    def test_proxy_trust_does_not_relax_host_or_origin_validation(self):
+        proxied = create_app({**self.settings, "PROXY_HOPS": 1}).test_client()
+        headers = {"X-Forwarded-Proto": "https", "X-Forwarded-For": "192.0.2.10",
+                   "X-Forwarded-Host": "cyberguard.example", "X-Forwarded-Port": "443"}
+        response = proxied.get("/api/config", base_url="http://attacker.example", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        for origin in ("https://attacker.example", "http://cyberguard.example", "null"):
+            with self.subTest(origin=origin):
+                response = proxied.post("/api/scan", base_url="http://cyberguard.example",
+                                        headers={**headers, "Origin": origin}, json={"url": "https://example.com"})
+                self.assertEqual(response.status_code, 403)
+        self.assertEqual(proxied.get("/api/config", base_url="http://cyberguard.example",
+                                     headers={**headers, "X-Forwarded-Proto": "http"}).status_code, 400)
+
+    def test_single_proxy_trust_ignores_untrusted_forwarded_prefix(self):
+        proxied = create_app({**self.settings, "PROXY_HOPS": 1}).test_client()
+        for number in range(11):
+            response = proxied.post("/api/scan", base_url="http://cyberguard.example",
+                                    headers={"Origin": self.origin, "X-Forwarded-Proto": "http, https",
+                                             "X-Forwarded-For": f"192.0.2.{number + 1}, 198.51.100.1"},
+                                    json={"url": "https://example.com"})
+            self.assertEqual(response.status_code, 200 if number < 10 else 429)
+
     def test_hourly_limit_and_expiration(self):
         start = time.time()
         with patch("limits.storage.memory.time.time", return_value=start) as clock:
@@ -155,6 +178,27 @@ class ProductionTests(unittest.TestCase):
 
 
 class ProductionConfigurationTests(unittest.TestCase):
+    def test_gunicorn_render_bind_entry_point_and_resource_defaults(self):
+        path = Path(__file__).resolve().parents[1] / "gunicorn.conf.py"
+        for port in ("10000", "12345"):
+            with self.subTest(port=port), patch.dict(os.environ, {"PORT": port}):
+                settings = runpy.run_path(str(path))
+            self.assertEqual(settings["bind"], f"0.0.0.0:{port}")
+            self.assertEqual(settings["wsgi_app"], "wsgi:application")
+            self.assertEqual(settings["workers"], 1)
+            self.assertEqual(settings["worker_class"], "gthread")
+            self.assertEqual(settings["threads"], 2)
+            self.assertFalse(settings["reload"])
+            self.assertEqual(settings["secure_scheme_headers"], {})
+            self.assertEqual(settings["forwarded_allow_ips"], "")
+            self.assertEqual(settings["forwarder_headers"], [])
+        with patch.dict(os.environ):
+            os.environ.pop("PORT", None)
+            self.assertEqual(runpy.run_path(str(path))["bind"], "127.0.0.1:8000")
+        for port in ("", "0", "65536", "-1", "abc", "10000 ", "1.5"):
+            with self.subTest(port=port), patch.dict(os.environ, {"PORT": port}), self.assertRaises(ValueError):
+                runpy.run_path(str(path))
+
     def test_environment_selects_production_and_ignores_sqlite_path(self):
         with patch.dict(os.environ, {"CYBERGUARD_ENV": "production", "CYBERGUARD_PUBLIC_ORIGIN": "https://cyberguard.example",
                                      "CYBERGUARD_RATE_STORAGE_URI": "redis://127.0.0.1:6379/5", "CYBERGUARD_PROXY_HOPS": "1"}), \
