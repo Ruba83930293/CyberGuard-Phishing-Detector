@@ -109,7 +109,7 @@ Run Gunicorn under a non-root service account with a service manager and restric
 ### Render Configuration
 
 - Build command: `pip install -r requirements.txt` using a supported stable Linux Python release.
-- Start command: `gunicorn --config gunicorn.conf.py wsgi:application`. The configuration also sets `wsgi_app` explicitly.
+- Start command: `gunicorn --config gunicorn.conf.py wsgi`. The module exports `app` for Gunicorn's module-only target and keeps `application` as an alias to the same production Flask instance. The explicit `wsgi:application` target and configured `wsgi_app` also remain supported.
 - Render supplies `PORT`; when present, Gunicorn binds to `0.0.0.0:$PORT`. Invalid port values fail startup. Without `PORT`, it retains the loopback binding for the standalone Nginx example.
 - Set `CYBERGUARD_ENV=production`, `CYBERGUARD_PUBLIC_ORIGIN=https://YOUR-SERVICE.onrender.com` (or the single canonical custom domain, without a trailing slash), and `CYBERGUARD_RATE_STORAGE_URI` to your dedicated private Redis connection URI in Render's environment settings. Never commit Redis credentials.
 - Set `CYBERGUARD_PROXY_HOPS=1` only after verifying that the isolated platform ingress supplies trustworthy rightmost client-IP and HTTPS values. This trusts one value of each header, not an arbitrary proxy chain. A multi-value `X-Forwarded-For` ending in an internal proxy address would merge client quotas. Do not increase trust or accept the first address blindly; request a topology-specific review if Render's actual chain differs.

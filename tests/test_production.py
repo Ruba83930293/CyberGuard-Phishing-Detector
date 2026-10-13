@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 import runpy
 import socket
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -239,6 +241,38 @@ class ProductionConfigurationTests(unittest.TestCase):
     def test_wsgi_entry_point_refuses_accidental_development_mode(self):
         with patch.dict(os.environ, {"CYBERGUARD_ENV": "development"}), self.assertRaises(RuntimeError):
             runpy.run_path(str(Path(__file__).resolve().parents[1] / "wsgi.py"))
+
+    def test_wsgi_exports_same_secure_app_for_module_only_target(self):
+        environment = {**os.environ, "CYBERGUARD_ENV": "production",
+                       "CYBERGUARD_PUBLIC_ORIGIN": "https://cyberguard.example",
+                       "CYBERGUARD_RATE_STORAGE_URI": "redis://127.0.0.1:6379/5",
+                       "CYBERGUARD_PROXY_HOPS": "1"}
+        code = """
+import os
+import app as backend
+import wsgi
+assert wsgi.app is wsgi.application is backend.app
+assert callable(wsgi.app)
+assert wsgi.app.config['MODE'] == 'production'
+assert not wsgi.app.debug
+assert not wsgi.app.config['HISTORY_ENABLED']
+assert wsgi.app.config['DATABASE'] is None
+assert wsgi.app.config['RATELIMIT_ENABLED']
+assert wsgi.app.config['TRUSTED_HOSTS'] == ['cyberguard.example']
+client = wsgi.app.test_client()
+response = client.get('/api/config', base_url='https://cyberguard.example')
+assert response.status_code == 200 and response.json == {'history_enabled': False}
+assert client.get('/api/history', base_url='https://cyberguard.example').status_code == 403
+assert client.get('/api/config', base_url='https://attacker.example').status_code == 400
+if os.name != 'nt':
+    from gunicorn.util import import_app
+    assert import_app('wsgi') is wsgi.app
+    assert import_app('wsgi:application') is wsgi.app
+"""
+        result = subprocess.run([sys.executable, "-c", code], env=environment,
+                                cwd=Path(__file__).resolve().parents[1],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_wsgi_rejects_an_already_imported_development_application(self):
         with patch.dict(os.environ, {"CYBERGUARD_ENV": "production"}), self.assertRaises(RuntimeError):

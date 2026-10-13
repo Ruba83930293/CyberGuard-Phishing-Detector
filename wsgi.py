@@ -9,3 +9,6 @@ from app import app as application
 
 if application.config["MODE"] != "production" or application.config["HISTORY_ENABLED"] or application.debug:
     raise RuntimeError("The WSGI application must have production security settings before import.")
+
+# Gunicorn defaults to the "app" attribute for a module-only target like "wsgi".
+app = application
