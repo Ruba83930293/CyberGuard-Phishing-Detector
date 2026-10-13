@@ -28,6 +28,7 @@ const requestDetails = new Map();
 const requestHeaders = new Map();
 const responseDetails = new Map();
 const errors = [];
+let publicCapabilities = false;
 
 function command(method, params = {}) {
     return new Promise((resolve, reject) => {
@@ -87,13 +88,21 @@ async function run() {
         }
         if (message.method === "Network.responseReceived") responseDetails.set(message.params.requestId, message.params.response);
         if (message.method === "Runtime.exceptionThrown") errors.push(message.params.exceptionDetails);
+        if (message.method === "Fetch.requestPaused") {
+            if (publicCapabilities && new URL(message.params.request.url).pathname === '/api/config') {
+                command('Fetch.fulfillRequest', { requestId: message.params.requestId, responseCode: 200,
+                    responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+                    body: Buffer.from(JSON.stringify({ history_enabled: false })).toString('base64')
+                }).catch(error => errors.push(String(error)));
+            } else command('Fetch.continueRequest', { requestId: message.params.requestId }).catch(error => errors.push(String(error)));
+        }
     };
     await command("Page.enable");
     await command("Runtime.enable");
     await command("Network.enable");
     await command("Page.navigate", { url: baseUrl });
     for (let attempt = 0; attempt < 100; attempt++) {
-        if (await evaluate("document.readyState === 'complete' && !!document.querySelector('#scanForm')")) break;
+        if (await evaluate("document.readyState === 'complete' && !!document.querySelector('#scanForm') && document.documentElement.dataset.historyEnabled === 'true' && document.querySelector('#urlsChecked').textContent === '0'")) break;
         await delay(100);
     }
     async function navigateView(page) {
@@ -195,6 +204,12 @@ async function run() {
         window.fetch = () => Promise.reject(new DOMException('Timeout', 'AbortError'));
         await submit('https://example.com');
         check(error.textContent.includes('timed out'), 'Missing timeout message');
+        window.fetch = () => Promise.resolve(new Response('<html>Proxy rate limit</html>', { status: 429, headers: { 'Content-Type': 'text/html' } }));
+        await submit('https://example.com');
+        check(error.textContent.includes('rate limit') && !input.hasAttribute('aria-invalid'), 'Proxy rate limit was reported as a connection/input error');
+        window.fetch = () => Promise.resolve(new Response('<html>Body too large</html>', { status: 413, headers: { 'Content-Type': 'text/html' } }));
+        await submit('https://example.com');
+        check(error.textContent.includes('too large'), 'Proxy body limit did not produce a clear error');
         window.fetch = originalFetch;
         await submit('https://example.com');
         check(!error.textContent, 'Failed recovery after network error');
@@ -409,6 +424,35 @@ async function run() {
         if (request.method === 'POST' || request.method === 'DELETE') assert.equal(headers.origin, new URL(baseUrl).origin, "Mutation omitted its exact Origin");
     }
     assert(apiRequests.some(([id, request]) => request.method === 'GET' && requestHeaders.get(id).origin === undefined), "Missing Origin-free same-origin GET coverage");
+    const previousHistoryRequests = requests.filter(url => new URL(url).pathname === '/api/history').length;
+    publicCapabilities = true;
+    await command('Fetch.enable', { patterns: [{ urlPattern: '*/api/config', requestStage: 'Request' }] });
+    await command('Page.reload');
+    let publicReady = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+        publicReady = await evaluate("document.readyState === 'complete' && document.documentElement.dataset.historyEnabled === 'false' && document.querySelector('#historyStatus')?.textContent === 'History disabled'");
+        if (publicReady) break;
+        await delay(20);
+    }
+    assert(publicReady, 'Public-mode UI did not initialize');
+    assert(await evaluate("document.querySelector('#saveHistory').disabled && !document.querySelector('#saveHistory').checked && document.querySelector('#deleteHistory').disabled && document.querySelector('#refreshHistory').disabled"), 'Public history controls remain enabled');
+    assert(await evaluate("[...document.querySelectorAll('[data-stat]')].every(element => element.textContent === '-') && document.querySelector('#analyticsStatus').textContent.includes('disabled')"), 'Public statistics imply persistent records');
+    for (const page of ['dashboard', 'scanner', 'insights', 'history']) {
+        await navigateView(page);
+        assert(await evaluate("!document.querySelector('#historyError').textContent && !document.querySelector('#formError').textContent"), `Public mode failed on ${page}`);
+    }
+    await navigateView('scanner');
+    await evaluate("document.querySelector('#saveHistory').checked = true; document.querySelector('#urlInput').value = 'http://192.0.2.1/login'; document.querySelector('#scanForm').requestSubmit()");
+    for (let attempt = 0; attempt < 100; attempt++) {
+        if (await evaluate("document.querySelector('#resultTitle').textContent === 'Risk score: 40/100' && !document.querySelector('#scanForm').hasAttribute('aria-busy')")) break;
+        await delay(20);
+    }
+    assert(await evaluate("document.querySelector('#resultTitle').textContent === 'Risk score: 40/100' && document.querySelector('#saveStatus').textContent.includes('Not stored')"), 'Public-mode scanning failed');
+    const publicScan = [...requestDetails.values()].reverse().find(request => new URL(request.url).pathname === '/api/scan');
+    assert.equal(JSON.parse(publicScan.postData).save_history, false, 'Public UI submitted a save request');
+    assert.equal(requests.filter(url => new URL(url).pathname === '/api/history').length, previousHistoryRequests, 'Public UI fetched shared history');
+    await command('Fetch.disable');
+    publicCapabilities = false;
     const sourceUrl = new URL(baseUrl);
     sourceUrl.hostname = sourceUrl.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
     await command("Page.navigate", { url: sourceUrl.origin });
@@ -446,7 +490,7 @@ async function run() {
     assert.equal(navigationHeaders['sec-fetch-user'], '?1');
     assert.equal(navigationHeaders.origin, undefined);
     assert.equal(errors.length, 0, "Browser JavaScript exception during responsive checks");
-    console.log(`PASS (${new URL(baseUrl).hostname}): ${result} in-page browser assertions plus real Origin/Fetch Metadata headers and user-initiated cross-site GET navigation; all four views at five viewport sizes, exact theme, risk badges, analytics, state preservation, direct links/reload, Back, keyboard navigation and reduced motion; isolated SQLite history, privacy, confirmation, statistics and API failures.`);
+    console.log(`PASS (${new URL(baseUrl).hostname}): ${result} in-page browser assertions plus public-mode capability/UI checks, real Origin/Fetch Metadata headers and user-initiated cross-site GET navigation; all four views at five viewport sizes, exact theme, risk badges, analytics, state preservation, direct links/reload, Back, keyboard navigation and reduced motion; isolated SQLite history, privacy, confirmation, statistics and API failures.`);
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {

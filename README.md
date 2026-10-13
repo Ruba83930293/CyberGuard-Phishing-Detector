@@ -7,19 +7,21 @@ CyberGuard analyzes URL **text only** using a Python Flask backend and the exist
 - HTTP/HTTPS URL validation and transparent 0-100 heuristic scoring with Low/Medium/High classifications.
 - Explanations for IP hosts, long URLs, excessive subdomains, suspicious keywords/encoding, punycode, lookalike indicators, and HTTP usage.
 - Four responsive views (Dashboard, URL Scanner, Security Analytics, and Scan History) with a shared navy/cyan theme, accessible form errors, loading states, and duplicate-submission prevention.
-- Explicit opt-in SQLite history with sanitized origins, pagination, newest-record refresh, saved-record statistics, and confirmed deletion.
-- Bounded JSON requests, parameterized SQL, literal text rendering, same-origin API access, and loopback Host validation.
+- Local-development opt-in SQLite history with sanitized origins, pagination, newest-record refresh, saved-record statistics, and confirmed deletion. Public deployment disables all persistent history and deletion.
+- Bounded JSON requests, parameterized SQL, literal text rendering, same-origin API access, and mode-specific Host validation.
+- Public-mode HTTPS enforcement, Redis-backed scan quotas, security headers, and a production-only Linux Gunicorn entry point.
 
 ## Technologies
 
 | Layer | Technologies |
 | --- | --- |
 | Frontend | HTML5, CSS3, vanilla JavaScript, Fetch API |
-| Backend | Python 3.10+, Flask 3.1.x |
-| Storage | Python standard-library SQLite, JSON reason records |
+| Backend | Python 3.10+, Flask 3.1.x; Gunicorn 26.x on Linux |
+| Storage | SQLite for local history only; Redis for public rate-limit counters only |
+| Abuse prevention | Flask-Limiter, per-client and aggregate scan quotas |
 | Tests | Python unittest; Node.js 22+ and Chrome/Chromium/Edge for browser integration |
 
-SQLite requires no separate service and the frontend requires no npm dependencies.
+Local SQLite requires no separate service and the frontend requires no npm dependencies. Production requires a private Redis service; submitted URLs and analysis results are not stored there.
 
 ## Installation and Local Setup
 
@@ -28,6 +30,7 @@ Use Python 3.10 or newer. From this repository in PowerShell:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:CYBERGUARD_ENV = 'development'
 .\.venv\Scripts\python.exe app.py
 ```
 
@@ -44,6 +47,8 @@ python3 -m venv .venv
 If port 5000 is occupied, run `.\.venv\Scripts\python.exe -m flask --app app run --host 127.0.0.1 --port 5001` and open http://127.0.0.1:5001 instead.
 
 Access the app using `localhost` or `127.0.0.1`; other Host values are rejected. Stop and restart a running Flask process after backend changes. The server runs without automatic reload or debug mode.
+
+Development is the default mode and keeps the local SQLite features. Install updated requirements and restart Flask after this upgrade so `/api/config` is available. Windows installs Flask-Limiter but skips Gunicorn; Linux deployment uses the same source without Windows-specific paths.
 
 The four views share one Flask-served frontend and use bookmarkable links: `/#dashboard`, `/#scanner`, `/#insights` (Security Analytics), and `/#history`. Browser Back and direct-link reloads work without new backend routes. Switching views retains the current analysis and save-history selection; reloading resets the selection to off. Dashboard totals and Analytics risk distribution use the same saved-record statistics.
 
@@ -66,7 +71,57 @@ Scores sum the triggered rule weights, capped at 100. Low = 0-29, Medium = 30-59
 
 URL input may omit the scheme; HTTPS is assumed. HTTP/HTTPS, valid domains, IPv4/IPv6, localhost, and optional ports 1-65535 are accepted. Embedded credentials (including user-info introduced by `@`) are rejected before analysis or storage. `@` in a path is allowed. The original URL text and percent encoding are preserved in the current analysis response. Each triggered rule runs once and includes its point contribution. Dashboard statistics now come from saved database records only; unsaved scans do not change them.
 
-## SQLite History Setup and Usage
+## Production Deployment
+
+Use a Linux host or Linux container with a supported stable Python release, a valid TLS certificate, one reverse proxy, and a private Redis service. Do not use `python app.py`, `flask run`, debug mode, or a reloader for public hosting. `wsgi.py` refuses to start unless production mode is explicitly selected. Gunicorn defaults bind only to loopback; never expose its port directly when proxy trust is enabled. See the [Flask Gunicorn guidance](https://flask.palletsprojects.com/en/stable/deploying/gunicorn/).
+
+### Environment Configuration
+
+| Variable | Development | Production |
+| --- | --- | --- |
+| `CYBERGUARD_ENV` | `development` (default) | Must be `production` |
+| `CYBERGUARD_PUBLIC_ORIGIN` | Not used | Required HTTPS origin, such as `https://cyberguard.example`, without a path or credentials |
+| `CYBERGUARD_PROXY_HOPS` | `0` | `1` only behind one isolated proxy; otherwise `0` |
+| `CYBERGUARD_RATE_STORAGE_URI` | Not needed; limits disabled | Required `redis://` or `rediss://` URI for a dedicated private Redis service/database |
+| `CYBERGUARD_DATABASE` | Optional SQLite path | Ignored; no SQLite initialization, reads, writes, or deletion |
+
+Production settings force debug off, the 16 KiB body limit, history off, and rate limiting on. Invalid/incomplete configuration fails startup. In-memory quotas are allowed only in automated test configuration, never in a real production startup. Production has no persistent scan data and does not mount or use `instance/`.
+
+### Linux Startup
+
+From the source directory, after provisioning private Redis and TLS:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+export CYBERGUARD_ENV=production
+export CYBERGUARD_PUBLIC_ORIGIN=https://cyberguard.example
+export CYBERGUARD_PROXY_HOPS=1
+export CYBERGUARD_RATE_STORAGE_URI=redis://127.0.0.1:6379/5
+.venv/bin/gunicorn --config gunicorn.conf.py --check-config wsgi:application
+.venv/bin/gunicorn --config gunicorn.conf.py wsgi:application
+```
+
+Replace the example hostname and Redis URI with your infrastructure values. Keep Redis private, authenticated where appropriate, and protected by TLS (`rediss://`) when traffic crosses hosts. Store credentials in the hosting platform's secret manager or a protected service environment file, never in source control or shell commands retained in public logs. All workers/replicas must share the same dedicated Redis quota database. Counter keys contain client IPs and counts, not submitted URLs; configure Redis access/retention accordingly. Do not share or clear this Redis database with unrelated applications.
+
+Run Gunicorn under a non-root service account with a service manager and restricted file permissions. The provided configuration uses two workers/two threads, bounded request headers, worker timeouts/recycling, no reload/debug, and no access log containing request URLs. Adjust capacity only after load testing. Gunicorn's automatic forwarded-header interpretation is disabled; `ProxyFix` handles only the explicitly configured single-hop `X-Forwarded-For` and `X-Forwarded-Proto` values.
+
+`deploy/nginx.conf.example` is a reverse-proxy template, not an installed configuration. Replace its hostname and certificate paths, add your platform's default-host rejection/TLS renewal policies, and validate with `nginx -t` before enabling it. Only expose proxy ports 80/443; firewall Gunicorn and Redis from external clients. The proxy must overwrite (not append) forwarding headers, preserve the Host, and enforce body/time/connection limits. Never use `CYBERGUARD_PROXY_HOPS=1` if clients can reach Gunicorn directly. Other proxy topologies require a separately reviewed configuration. [Flask warns that incorrect ProxyFix trust is a security issue](https://flask.palletsprojects.com/en/stable/deploying/proxy_fix/).
+
+### Public Security and Privacy
+
+- `POST /api/scan`: 10 requests/minute and 120/hour per client IP, plus 1000/hour across the deployment. Invalid scan attempts count too. Requests exceeding a quota receive JSON status 429 with `Retry-After`; the analyzer does not run.
+- Redis failure rejects scans with a safe service error; there is no unmetered in-memory fallback. These quotas use shared Redis counters rather than per-worker state. See [Flask-Limiter storage guidance](https://flask-limiter.readthedocs.io/en/stable/).
+- `/api/config` exposes only `history_enabled`. The frontend disables saving, refreshing, deletion, and saved-record analytics in public mode while preserving all four views and URL-text scanning.
+- GET/DELETE `/api/history` and `save_history: true` receive 403 in production. This remains enforced even if a caller modifies the checkbox or bypasses the frontend.
+- HTTPS, the exact configured public Origin, and the configured Host are enforced. CSP, HSTS (one year, without automatic subdomain/preload coverage), frame denial, MIME sniffing protection, referrer policy, resource isolation, and disabled camera/microphone/geolocation permissions apply.
+- No submitted website is fetched, resolved, or executed. URLs are processed transiently and returned to the requesting browser. Redis stores quota counters only; no production SQLite history exists. Do not enable body capture, request mirroring, or sensitive request logging in proxies/APM tooling.
+
+### Pre-Launch Verification
+
+On the intended Linux staging environment, run both test suites, Gunicorn's config check, and `nginx -t`. Through the real HTTPS proxy, verify `/api/config` reports `false`, valid scans return scores, the 11th same-IP scan in a minute returns 429, and saving/history/deletion return 403. Stop Redis temporarily and verify scans fail closed. Confirm rate limits are shared across workers/replicas, different real client IPs are correctly distinguished, and spoofed client forwarding headers cannot bypass quotas. Test certificate renewal and verify no application/Redis port is publicly reachable. Unit/browser tests do not replace this infrastructure validation.
+
+## SQLite History Setup and Usage (Local Only)
 
 SQLite is included with Python; no new packages or separate database server are needed. Flask automatically creates `instance/scans.sqlite3` and its schema on startup. This directory, the database, and SQLite sidecar files are excluded from Git. `CYBERGUARD_DATABASE` can override the database path before startup, for example `$env:CYBERGUARD_DATABASE = 'instance/custom-history.sqlite3'` in PowerShell. Keep custom databases and backups in ignored directories.
 
@@ -92,7 +147,9 @@ Deletion uses SQLite secure-delete mode to clear deleted database content, but c
 {"url": "https://example.com/login", "save_history": false}
 ```
 
-Successful responses contain `url`, `hostname`, `risk_score`, `risk_level`, `reasons` (objects with `rule`, `points`, `explanation`), `raw_score`, `score_cap`, `analysis_type`, `limitation`, and `history_saved`. Saved results also contain `saved_scan_id` and sanitized `stored_url`. Errors return `{"error": "..."}` with status 400 for invalid JSON/inputs or untrusted hosts, 403 for disallowed browser origins/cross-site requests, 413 for oversized requests, 415 for unsupported content types, 503 for unavailable history storage, or 500 for an unexpected internal failure.
+Successful responses contain `url`, `hostname`, `risk_score`, `risk_level`, `reasons` (objects with `rule`, `points`, `explanation`), `raw_score`, `score_cap`, `analysis_type`, `limitation`, and `history_saved`. Local saved results also contain `saved_scan_id` and sanitized `stored_url`. Errors return `{"error": "..."}` with status 400 for invalid JSON/inputs, insecure production requests or untrusted hosts, 403 for disallowed origins or disabled public history, 413 for oversized requests, 415 for unsupported content types, 429 for scan quotas, 503 for unavailable history/rate-limit storage, or 500 for an unexpected internal failure.
+
+`GET /api/config` returns `{"history_enabled": true}` locally or `{"history_enabled": false}` publicly. It never exposes Redis credentials or internal file paths.
 
 - `GET /api/history?limit=20&offset=0` returns `scans`, `total`, `statistics`, `limit`, and `offset`. Limit must be 1-100; offset must be 0-1000000. Unknown or repeated query parameters are rejected. Each scan contains `id`, `scanned_at`, `normalized_url`, `risk_score`, `risk_level`, and `reasons`.
 - `DELETE /api/history` requires `Content-Type: application/json` and the exact body `{"confirm": true}`. It returns `{"deleted": N}`. Confirmation is required in both the UI and API.
@@ -113,9 +170,11 @@ Frontend API calls use relative URLs with `mode: "same-origin"`, credentials omi
 
 There are no DNS, reputation, certificate, redirect, attachment, or webpage checks. Subdomain counts are approximate because no public suffix list is used. Lookalike checks use selected digit/Cyrillic/Greek substitutions and the names paypal, google, microsoft, apple, amazon, and facebook; they do not detect every homograph or establish brand ownership. Python's standard-library IDNA codec can differ from browser domain parsing; unusual legacy numeric IP spellings are not supported. Percent decoding is bounded to one pass for keyword analysis; nested encoding is flagged separately. The scoring weights are transparent hand-written rules, not a validated machine-learning model.
 
-The server binds to loopback with debug mode off. Flask's development server is for local use. Internet deployment would require production hosting, HTTPS, rate limits, and operational review. No external runtime API is required; installation downloads Flask dependencies from PyPI.
+The development server binds to loopback with debug mode off. Production uses the Linux Gunicorn entry point behind HTTPS and requires operational review of the actual proxy/Redis deployment. There are no external website/security API calls; Redis is trusted infrastructure used only for quota counters. Installation downloads dependencies from PyPI.
 
-There is no authentication, per-user history, rate limiting, storage quota, or automatic retention expiry. Local programs can read/delete history through the API, and anyone with filesystem access can read the plaintext SQLite file. Unlimited opted-in scans can grow the database. Timeouts do not prove that a save/delete did not complete; refresh history before retrying a mutation. Dependencies use a version range rather than a complete reproducible lockfile. The review checked installed dependency consistency, not a full CVE database or penetration audit. Firefox/Safari, other operating systems, and the full supported Python version range were not tested.
+There is no authentication or CAPTCHA. Public IP quotas are not an identity system: shared NAT users share limits, distributed attackers can exhaust the aggregate quota, and fixed windows permit boundary bursts. Add edge/WAF connection limits and DDoS protection; app limits cannot stop traffic before it reaches the server. Redis must be monitored, patched, and isolated; its outage intentionally stops scanning. TLS/proxy trust, hosting access controls, and secret management remain deployment responsibilities.
+
+Local history remains shared, unencrypted, and without storage quotas or retention expiry; do not expose development mode publicly. Anyone with local filesystem access can read its SQLite file. Timeouts do not prove a local save/delete did not complete. Dependency ranges are not a complete reproducible lockfile; freeze/audit dependencies for your deployment and keep them updated. Windows tests do not establish Linux Gunicorn/Redis/proxy integration, Firefox/Safari, or every Python version's compatibility. This is not a penetration-test or CVE-audit certification.
 
 Framework references: [Flask request-size configuration](https://flask.palletsprojects.com/en/stable/config/#MAX_CONTENT_LENGTH), [Flask Host validation](https://flask.palletsprojects.com/en/stable/web-security/#host-header-validation), [Flask testing documentation](https://flask.palletsprojects.com/en/stable/testing/), and [Python SQLite parameterized queries](https://docs.python.org/3/library/sqlite3.html#how-to-use-placeholders-to-bind-values-in-sql-queries).
 
@@ -153,7 +212,9 @@ To test saving manually, enable **Save Scan to History** and scan `https://examp
 
 If the option is missing, open the app through its running Flask server (not a `file:` URL or static preview), and hard-refresh the browser with Ctrl+F5. "No saved scans" is expected until a successful scan has been submitted with saving enabled. Changing the checkbox after a scan does not save that earlier result; submit another scan after enabling it.
 
-Origin validation review on 2026-10-13: 52 backend tests and 138 in-page browser assertions passed on each of `127.0.0.1` and `localhost`, plus real request-header and user-initiated navigation checks, all four views at five viewport sizes (1440, 1024, 768, 390, and 320px), navigation/accessibility, reload/persistence, and shared-theme checks. JavaScript syntax checks and `git diff --check` passed. Validation ran on Windows with the installed Python 3.15 release candidate and Chrome; this does not establish compatibility with every supported runtime.
+Production tests exercise disabled SQLite access, forced security settings, HTTPS/Host/Origin enforcement, request limits, per-IP/aggregate quotas, forwarding-header spoofing, trusted-proxy behavior, limiter outage, and no outbound URL/DNS access. They use in-memory test counters, not a live Redis service. Browser tests simulate the public capability response while exercising actual UI scans, navigation, disabled history controls, and absence of history requests; backend production enforcement is separately tested.
+
+Deployment-preparation validation on 2026-10-13: 69 backend tests (17 production-specific) and 142 in-page browser assertions passed on each local hostname, plus public-mode UI, navigation, and request-header checks. JavaScript syntax, `pip check`, and Git whitespace checks passed. Linux Gunicorn, real Redis, TLS certificates, and the proxy template still require validation on the intended hosting platform before launch. No deployment is performed by these tests.
 
 ## Screenshots
 
@@ -196,6 +257,9 @@ The review found no tracked runtime artifacts or obvious private-key/access-toke
 - `phishing_detector.py`: URL validation, rules, and scoring.
 - `database.py`: SQLite initialization, sanitized storage, history, statistics, and deletion.
 - `instance/scans.sqlite3`: local generated history database, excluded from Git.
-- `requirements.txt`: Flask dependency range.
+- `config.py`: validated environment modes and production defaults.
+- `wsgi.py`, `gunicorn.conf.py`: production-only entry point and bounded Linux WSGI defaults.
+- `deploy/nginx.conf.example`: HTTPS reverse-proxy template requiring infrastructure-specific configuration.
+- `requirements.txt`: Flask, Flask-Limiter/Redis and Linux-only Gunicorn dependency ranges.
 - `index.html`, `style.css`, `script.js`: existing interface and API integration.
 - `tests/`: automated backend tests and optional browser integration tests.

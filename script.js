@@ -22,6 +22,33 @@ function initializeCyberGuard() {
     let deleting = false;
     let savedTotal = 0;
     let scanning = false;
+    let historyEnabled = false;
+    saveHistory.disabled = true;
+
+    async function loadDeploymentSettings() {
+        try {
+            const settings = await apiRequest("/api/config");
+            if (typeof settings.history_enabled !== "boolean") throw new Error("Invalid deployment settings.");
+            historyEnabled = settings.history_enabled;
+            saveHistory.disabled = !historyEnabled;
+            document.documentElement.dataset.historyEnabled = String(historyEnabled);
+            if (!historyEnabled) {
+                saveHistory.checked = false;
+                document.querySelector("#historyPrivacy").textContent = "Persistent history is disabled on this public deployment. Submitted URLs are not stored.";
+                pages.dashboard.description = "URL-text analysis workspace. Persistent history and saved-record statistics are disabled on this public deployment.";
+                pages.insights.description = "Saved-record analytics are unavailable because public scan history is disabled.";
+                pages.history.description = "Persistent scan history and deletion are disabled on this public deployment.";
+                showPage();
+            }
+            await loadHistory();
+        } catch (error) {
+            historyEnabled = false;
+            document.documentElement.dataset.historyEnabled = "false";
+            historyError.textContent = "Could not load deployment settings. History saving remains disabled. Restart the Flask server and reload.";
+            updateStatistics();
+            updateHistoryControls();
+        }
+    }
 
     const pages = {
         dashboard: { title: "Dashboard", description: "An overview of saved URL analyses and your analysis environment." },
@@ -88,12 +115,16 @@ function initializeCyberGuard() {
                 ...options, signal: controller.signal, mode: "same-origin", referrerPolicy: "same-origin",
                 credentials: "omit", redirect: "error", cache: "no-store"
             });
-            const data = await response.json();
+            const data = await response.json().catch(() => null);
             if (!response.ok) {
-                const error = new Error(data.error || "Request failed. Please try again.");
+                const fallback = response.status === 429 ? "Scan rate limit exceeded. Please try again later."
+                    : response.status === 413 ? "Request is too large. Maximum size is 16 KiB."
+                    : "Request failed. Please try again.";
+                const error = new Error(typeof data?.error === "string" ? data.error : fallback);
                 error.status = response.status;
                 throw error;
             }
+            if (!data || typeof data !== "object") throw new Error("Invalid API response.");
             return data;
         } finally {
             clearTimeout(timeout);
@@ -101,13 +132,27 @@ function initializeCyberGuard() {
     }
 
     function updateHistoryControls() {
-        deleteButton.disabled = !savedTotal || scanning || historyLoading || deleting;
-        refreshButton.disabled = historyLoading || deleting;
-        previousButton.disabled = historyLoading || deleting || historyOffset === 0;
-        nextButton.disabled = historyLoading || deleting || historyOffset + 20 >= savedTotal;
+        deleteButton.disabled = !historyEnabled || !savedTotal || scanning || historyLoading || deleting;
+        refreshButton.disabled = !historyEnabled || historyLoading || deleting;
+        previousButton.disabled = !historyEnabled || historyLoading || deleting || historyOffset === 0;
+        nextButton.disabled = !historyEnabled || historyLoading || deleting || historyOffset + 20 >= savedTotal;
     }
 
     async function loadHistory() {
+        if (!historyEnabled) {
+            updateStatistics();
+            document.querySelector("#analyticsStatus").textContent = "Saved-record statistics are disabled on this public deployment.";
+            historyRows.replaceChildren();
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.colSpan = 5;
+            cell.textContent = "Persistent scan history is disabled on this public deployment.";
+            row.appendChild(cell);
+            historyRows.appendChild(row);
+            historyStatus.textContent = "History disabled";
+            updateHistoryControls();
+            return;
+        }
         const version = ++historyVersion;
         historyLoading = true;
         historyError.textContent = "";
@@ -212,7 +257,8 @@ function initializeCyberGuard() {
             item.textContent = explanation;
             indicatorList.appendChild(item);
         });
-        document.querySelector("#saveStatus").textContent = result.history_saved
+        document.querySelector("#saveStatus").textContent = !historyEnabled ? "Not stored. Persistent history is disabled."
+            : result.history_saved
             ? `Saved to history as ${result.stored_url}. Paths, queries, and fragments were removed.`
             : "Not saved to history.";
         if (!resultCard.closest("[data-page]").hidden) resultCard.scrollIntoView({ behavior: "auto", block: "nearest" });
@@ -241,7 +287,7 @@ function initializeCyberGuard() {
             const result = await apiRequest("/api/scan", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ url: value, save_history: saveHistory.checked })
+                body: JSON.stringify({ url: value, save_history: historyEnabled && saveHistory.checked })
             });
             renderResult(result);
             if (result.history_saved) {
@@ -267,7 +313,7 @@ function initializeCyberGuard() {
     previousButton.addEventListener("click", () => { historyOffset = Math.max(0, historyOffset - 20); loadHistory(); });
     nextButton.addEventListener("click", () => { historyOffset += 20; loadHistory(); });
     deleteButton.addEventListener("click", async () => {
-        if (scanning || deleting || !savedTotal) return;
+        if (!historyEnabled || scanning || deleting || !savedTotal) return;
         if (!window.confirm("Delete all saved scan history for this server? This cannot be undone.")) return;
         deleting = true;
         scanButton.disabled = true;
@@ -306,7 +352,8 @@ function initializeCyberGuard() {
     });
     window.addEventListener("hashchange", () => showPage(true));
     showPage();
-    loadHistory();
+    updateHistoryControls();
+    loadDeploymentSettings();
 }
 
 if (document.readyState === "loading") {
